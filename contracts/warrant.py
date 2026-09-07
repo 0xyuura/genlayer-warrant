@@ -71,6 +71,24 @@ RESULT_FIELDS = ("digest", "bits", "screened")
 ERROR_EXPECTED = "[EXPECTED]"
 
 
+def status_of(response: typing.Any) -> int:
+    """Read the HTTP status off a web response.
+
+    The GenLayer docs show `response.status_code`. The runtime object actually
+    exposes `status`, and reaching for the documented name raises
+    AttributeError inside the leader, which surfaces as UNDETERMINED /
+    DISAGREE / FINISHED_WITH_ERROR: a consensus shaped failure for something
+    that is not a consensus problem at all. That cost a deployment to find, so
+    both names are accepted here and neither is guessed at.
+    """
+    value = getattr(response, "status", None)
+    if value is None:
+        value = getattr(response, "status_code", None)
+    if value is None:
+        raise ValueError("RESPONSE_STATUS_MISSING")
+    return int(value)
+
+
 def _now() -> int:
     """Transaction datetime, not host wall clock.
 
@@ -581,7 +599,7 @@ class Warrant(gl.Contract):
                 # verdict field and discards everything else unread.
                 return gl.nondet.exec_prompt(prompt, response_format="json")
 
-            result = judge_evidence(criteria, body, response.status_code, ask)
+            result = judge_evidence(criteria, body, status_of(response), ask)
             return json.dumps(result, sort_keys=True)
 
         def validator_fn(leaders_res: gl.vm.Result) -> bool:

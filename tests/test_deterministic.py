@@ -162,6 +162,35 @@ class DeterministicChecks(unittest.TestCase):
         self.assertFalse(w.run_deterministic_check(check, hostile, 200))
 
 
+class ResponseStatus(unittest.TestCase):
+    """The docs and the runtime disagree about this attribute name.
+
+    Reaching for the documented `status_code` raises inside the leader, which
+    the chain reports as DISAGREE: a consensus shaped failure for something
+    that has nothing to do with consensus. Both names are read, neither is
+    assumed.
+    """
+
+    class _Runtime:
+        status = 200
+
+    class _Documented:
+        status_code = 404
+
+    class _Neither:
+        pass
+
+    def test_reads_the_runtime_attribute(self):
+        self.assertEqual(w.status_of(self._Runtime()), 200)
+
+    def test_reads_the_documented_attribute(self):
+        self.assertEqual(w.status_of(self._Documented()), 404)
+
+    def test_a_response_with_neither_is_an_error_not_a_zero(self):
+        with self.assertRaises(ValueError):
+            w.status_of(self._Neither())
+
+
 class OneBitOutput(unittest.TestCase):
     def test_accepts_only_the_two_tokens(self):
         self.assertTrue(w.read_bit("YES"))
