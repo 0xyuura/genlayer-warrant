@@ -197,16 +197,30 @@ rule makes it fail immediately.
 Everything below happened on Testnet Bradbury against the live contract, with
 real GEN, and can be read back from the explorer.
 
+Two jobs were run end to end.
+
+**`j2`, the clean path.** A deliverable that describes the work and nothing
+else, at a commit pinned raw URL.
+
 | Call | Outcome |
 | --- | --- |
 | `open_job` with 1 GEN | Contract balance became exactly `0xde0b6b3a7640000`. The escrow holds real value, not a number in a field |
-| `accept` | ACCEPTED / AGREE. The stored criteria hash matched the one computed locally, so freezing works across the client and the chain |
-| `submit` | ACCEPTED / AGREE, evidence pinned to a commit addressed raw URL and its sha256 |
-| `adjudicate` | ACCEPTED / AGREE / FINISHED_WITH_RETURN. One web fetch and two model calls, and three validators produced identical structures |
-| `release` then `withdraw` | ACCEPTED / AGREE. Entitlement cleared, job `CLOSED` |
+| `accept` | ACCEPTED / AGREE. The stored criteria hash matched the one computed locally, so freezing holds across the client and the chain |
+| `submit` | ACCEPTED / AGREE, evidence pinned to a URL and its sha256 |
+| `adjudicate` | ACCEPTED / AGREE / FINISHED_WITH_RETURN. One web fetch, a screen call and one judgement call, and three validators produced identical structures. `bits` came back `11` |
+| `settle` then `withdraw` | ACCEPTED / AGREE. Entitlement assigned to the worker, cleared before sending, job `CLOSED` |
 
-The first adjudication returned `EVIDENCE_ADDRESSED_THE_JUDGE`, which is
-limitation 7 above and is left in the record rather than tidied away.
+**`j1`, the honest failure.** The deliverable we first considered clean
+contained prose about being judged. The screen refused it, the job went to
+`STALEMATE` with `EVIDENCE_ADDRESSED_THE_JUDGE`, and the payer used `release`
+to pay anyway. That is limitation 7 above, and it is left in the record rather
+than tidied away, because it is the asymmetry working: the failure cost a
+refusal, and the money did not move until a human decided it should.
+
+External messages execute on finalisation, so a `withdraw` that is ACCEPTED has
+committed the entitlement but the transfer itself lands when the appeal window
+closes. The contract balance therefore trails the job state by design, and a
+balance read straight after `withdraw` still shows the escrow holding the funds.
 
 Three GenVM behaviours cost a redeployment each, and every one of them reached
 the chain as `UNDETERMINED / DISAGREE`, which reads like a consensus problem
