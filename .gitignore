@@ -1,0 +1,4 @@
+SUBMISSION.md
+__pycache__/
+*.pyc
+.gstack/
