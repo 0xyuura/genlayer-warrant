@@ -101,21 +101,31 @@ class StorageValuesAreConvertedBeforeStdlibUse(unittest.TestCase):
     were lost to this. The rule is cheap to keep and expensive to rediscover.
     """
 
-    def test_every_json_loads_in_the_contract_converts_first(self):
+    # Names that come from storage or from calldata. Values produced inside
+    # the method, like the leader's own return, are ordinary Python and need
+    # no conversion, so the rule is scoped rather than blanket.
+    NEEDS_CONVERSION = ("job.", "criteria_json")
+
+    def test_every_json_loads_of_a_stored_value_converts_first(self):
+        checked = 0
         for name in ("open_job", "adjudicate", "settle"):
             src = inspect.getsource(getattr(w.Warrant, name))
             for line in src.splitlines():
                 if "json.loads(" not in line:
                     continue
+                if not any(n in line for n in self.NEEDS_CONVERSION):
+                    continue
+                checked += 1
                 self.assertIn("json.loads(str(", line,
-                              "%s passes a storage value to json.loads "
+                              "%s passes a stored value to json.loads "
                               "without str(): %s" % (name, line.strip()))
+        self.assertGreaterEqual(checked, 3, "the rule matched nothing")
 
 
 class StorageIsNotTouchedInsideTheNondetBlock(unittest.TestCase):
     def test_adjudicate_pulls_what_it_needs_before_the_closures(self):
         src = inspect.getsource(w.Warrant.adjudicate)
-        pulled = src.index("criteria = json.loads(job.criteria)")
+        pulled = src.index("criteria = json.loads(str(job.criteria))")
         leader = src.index("def leader_fn")
         self.assertLess(pulled, leader)
         closures = src[leader:src.index("agreed = json.loads")]
