@@ -245,7 +245,7 @@ tests/test_adversarial.py     the injection corpus and containment properties
 tests/test_contract_shape.py  structural invariants
 tests/corpus.py               the payloads
 fixtures/                     two deliverables, one clean and one hostile
-docs/                         design, plan, and the deployment record
+docs/DESIGN.md                the design: threat model, consensus rule, limitations
 ```
 
 ## Licence
