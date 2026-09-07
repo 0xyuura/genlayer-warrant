@@ -92,6 +92,26 @@ class PullNotPush(unittest.TestCase):
                         src.index("emit_transfer"))
 
 
+class StorageValuesAreConvertedBeforeStdlibUse(unittest.TestCase):
+    """A GenVM storage value is not a plain Python str.
+
+    Handing one straight to json.loads kills the transaction before the
+    consensus block runs at all, and the trace shows zero web and zero model
+    calls, which reads like a network problem and is not one. Two adjudications
+    were lost to this. The rule is cheap to keep and expensive to rediscover.
+    """
+
+    def test_every_json_loads_in_the_contract_converts_first(self):
+        for name in ("open_job", "adjudicate", "settle"):
+            src = inspect.getsource(getattr(w.Warrant, name))
+            for line in src.splitlines():
+                if "json.loads(" not in line:
+                    continue
+                self.assertIn("json.loads(str(", line,
+                              "%s passes a storage value to json.loads "
+                              "without str(): %s" % (name, line.strip()))
+
+
 class StorageIsNotTouchedInsideTheNondetBlock(unittest.TestCase):
     def test_adjudicate_pulls_what_it_needs_before_the_closures(self):
         src = inspect.getsource(w.Warrant.adjudicate)

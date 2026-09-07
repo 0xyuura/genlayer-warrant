@@ -475,7 +475,7 @@ class Warrant(gl.Contract):
         if int(value) == 0:
             _fail(ERROR_EXPECTED, "NO_VALUE")
         try:
-            items = parse_criteria(json.loads(criteria_json))
+            items = parse_criteria(json.loads(str(criteria_json)))
         except ValueError as err:
             _fail(ERROR_EXPECTED, str(err))
         except Exception:
@@ -517,7 +517,7 @@ class Warrant(gl.Contract):
             _fail(ERROR_EXPECTED, "STATE")
         if gl.message.sender_address != job.worker:
             _fail(ERROR_EXPECTED, "NOT_WORKER")
-        if criteria_hash.strip().lower() != job.criteria_hash:
+        if str(criteria_hash).strip().lower() != str(job.criteria_hash):
             _fail(ERROR_EXPECTED, "CRITERIA_HASH_MISMATCH")
         job.state = STATE_ACCEPTED
 
@@ -536,10 +536,10 @@ class Warrant(gl.Contract):
             _fail(ERROR_EXPECTED, "NOT_WORKER")
         if _now() > int(job.deadline):
             _fail(ERROR_EXPECTED, "PAST_DEADLINE")
-        digest = sha256.strip().lower()
+        digest = str(sha256).strip().lower()
         if len(digest) != 64:
             _fail(ERROR_EXPECTED, "SHA256_SHAPE")
-        if not url.startswith("https://"):
+        if not str(url).startswith("https://"):
             _fail(ERROR_EXPECTED, "URL_SCHEME")
         job.evidence_url = url
         job.evidence_sha256 = digest
@@ -557,9 +557,13 @@ class Warrant(gl.Contract):
 
         # Storage cannot be touched inside a nondeterministic block, so
         # everything the judgement needs is pulled into plain Python first.
-        criteria = json.loads(job.criteria)
-        url = job.evidence_url
-        promised = job.evidence_sha256
+        # Storage values are not plain Python strings, so every one of them
+        # is converted before it reaches json or hashlib. Skipping this is
+        # what made the first two adjudications die before the consensus
+        # block ran at all, with zero web and zero model calls in the trace.
+        criteria = json.loads(str(job.criteria))
+        url = str(job.evidence_url)
+        promised = str(job.evidence_sha256)
 
         def leader_fn() -> str:
             response = gl.nondet.web.request(url, method="GET")
@@ -618,7 +622,7 @@ class Warrant(gl.Contract):
         if job.state != STATE_RULED:
             _fail(ERROR_EXPECTED, "STATE")
         try:
-            party = settlement_of(job.bits, json.loads(job.criteria))
+            party = settlement_of(str(job.bits), json.loads(str(job.criteria)))
         except ValueError as err:
             _fail(ERROR_EXPECTED, str(err))
         job.entitled = job.worker if party == "worker" else job.payer
