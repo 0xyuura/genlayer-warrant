@@ -91,7 +91,7 @@ class Containment(unittest.TestCase):
             self.assertNotIn(close, text, name)
             # The block closes after the payload, and our instruction is last.
             self.assertGreater(prompt.rindex(close), prompt.rindex(text), name)
-            self.assertGreater(prompt.rindex("YES or NO"), prompt.rindex(close),
+            self.assertGreater(prompt.rindex("two words"), prompt.rindex(close),
                                name)
 
 
