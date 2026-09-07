@@ -4,9 +4,9 @@
 wrote the evidence.**
 
 Live on Testnet Bradbury at
-[`0xCF521b159fef3ED7436d31D466bf2136a5f6CC55`](https://explorer-bradbury.genlayer.com/address/0xCF521b159fef3ED7436d31D466bf2136a5f6CC55)
+[`0xA50cA7A2be22b53968a72b42f5188F44B7b839EE`](https://explorer-bradbury.genlayer.com/address/0xA50cA7A2be22b53968a72b42f5188F44B7b839EE)
 
-Call it without a local setup: [open it in GenLayer Studio](https://studio.genlayer.com/?import-contract=0xCF521b159fef3ED7436d31D466bf2136a5f6CC55)
+Call it without a local setup: [open it in GenLayer Studio](https://studio.genlayer.com/?import-contract=0xA50cA7A2be22b53968a72b42f5188F44B7b839EE)
 
 ## The problem
 
@@ -147,11 +147,24 @@ Each of these is a live weakness, not a rhetorical one.
 6. **The screen and the judges are the same class of component.** If a model is
    broadly susceptible to a technique, both fail together. Mechanisms 1 to 6
    are the ones that hold when that happens, which is why 7 is trusted least.
+7. **The screen has a real false positive rate, and we measured it the hard
+   way.** The first job run on chain used a deliverable we considered clean. It
+   ended `STALEMATE` with `EVIDENCE_ADDRESSED_THE_JUDGE`, because that document
+   happened to describe, in prose, that it existed to be judged. The screen was
+   not wrong: the text really did discuss its own evaluation. But it means any
+   deliverable that talks about review, acceptance, or grading can be refused
+   for saying so. Whoever writes a deliverable for a Warrant job should describe
+   the work, not the assessment.
+
+   This is the asymmetry in mechanism 7 doing exactly what it was chosen for.
+   The failure cost a refusal and a stalemate. It could not have cost a payment,
+   and on chain it did not: the money stayed put until the payer released it
+   deliberately.
 
 ## Tests
 
 ```bash
-python -m unittest discover -s tests     # 66 tests, offline, no model
+python -m unittest discover -s tests     # 69 tests, offline, no model
 genvm-lint check contracts/warrant.py
 ```
 
@@ -178,6 +191,36 @@ vectors up to eight criteria, more than 80,000 pairs, and asserts there is no
 pair the agreement rule accepts while settlement differs. That is cheap
 precisely because agreement is exact equality, and any future loosening of the
 rule makes it fail immediately.
+
+## Exercised on chain
+
+Everything below happened on Testnet Bradbury against the live contract, with
+real GEN, and can be read back from the explorer.
+
+| Call | Outcome |
+| --- | --- |
+| `open_job` with 1 GEN | Contract balance became exactly `0xde0b6b3a7640000`. The escrow holds real value, not a number in a field |
+| `accept` | ACCEPTED / AGREE. The stored criteria hash matched the one computed locally, so freezing works across the client and the chain |
+| `submit` | ACCEPTED / AGREE, evidence pinned to a commit addressed raw URL and its sha256 |
+| `adjudicate` | ACCEPTED / AGREE / FINISHED_WITH_RETURN. One web fetch and two model calls, and three validators produced identical structures |
+| `release` then `withdraw` | ACCEPTED / AGREE. Entitlement cleared, job `CLOSED` |
+
+The first adjudication returned `EVIDENCE_ADDRESSED_THE_JUDGE`, which is
+limitation 7 above and is left in the record rather than tidied away.
+
+Three GenVM behaviours cost a redeployment each, and every one of them reached
+the chain as `UNDETERMINED / DISAGREE`, which reads like a consensus problem
+and is not one. They are written down because the next builder will hit them:
+
+| Symptom | Actual cause |
+| --- | --- |
+| DISAGREE, no web or model calls in the trace | A storage value is not a plain `str`. `json.loads(job.field)` raises; `json.loads(str(job.field))` does not |
+| DISAGREE, one web call in the trace | The docs say `response.status_code`. The runtime object exposes `status` |
+| DISAGREE after model calls | Without `response_format="json"` a model wraps its answer, and a strict one bit parser refuses it |
+
+The way to see any of these is `genlayer call <address> <write method>`, which
+simulates for free and returns the real Python traceback in `Stderr`.
+`genlayer trace` does not show it for an undetermined transaction.
 
 ## Layout
 
