@@ -8,6 +8,55 @@ Live on Testnet Bradbury at
 
 Call it without a local setup: [open it in GenLayer Studio](https://studio.genlayer.com/?import-contract=0xA50cA7A2be22b53968a72b42f5188F44B7b839EE)
 
+## Revision after review
+
+The first review requested changes, and both findings were real. Quoted in full:
+
+> Please provide matching corrected source and deployment that (1) rejects
+> oversized HTTP responses before hashing, rather than hashing only a
+> 65,536-byte prefix, and (2) prevents deadline reclaim from overriding a job
+> that has already reached RULED. The current paths can ignore appended evidence
+> bytes and let the payer reclaim after a completed ruling but before
+> settlement.
+
+**Finding 1, appended evidence bytes.** The leader sliced the response to
+`MAX_EVIDENCE_BYTES` and hashed the slice. A worker could commit to the sha256
+of a 65,536 byte prefix and serve a longer file, and the appended bytes were
+never hashed and never judged. The size guard inside `judge_evidence` could not
+catch it, because it only ever saw the slice.
+
+Fixed in `evaluate_fetch`. Nothing is sliced. The length of the whole body is
+checked first, and an oversized body is refused as `EVIDENCE_TOO_LARGE` before
+any hashing happens. The refusal is a named value inside the agreed result, so
+validators reach consensus on the refusal itself rather than all failing.
+
+The same root cause had a second symptom, closed by the same change: a
+`max_bytes` criterion was evaluated against the slice, so a limit above 65,536
+passed for a file of any size.
+
+**Finding 2, reclaim overriding a ruling.** `reclaim` refused only `SETTLED`
+and `CLOSED`, so a payer could wait for a ruling in the worker's favour and
+reclaim after the deadline but before anyone called `settle`.
+
+Fixed in `reclaim_refusal`, which is an explicit allowlist rather than a
+denylist. A `RULED` job is never reclaimable and fails with `RULING_EXISTS`;
+`settle` stays available to anyone. A state the function does not name is
+refused rather than trusted.
+
+**The sharper version of finding 2, closed with it.** A `SUBMITTED` job had the
+same exposure: a worker who delivered on time could be front run by the payer
+the moment the deadline passed, before `adjudicate` had a chance to run. Such a
+job is now protected for `ADJUDICATION_GRACE`, three days after the deadline.
+The protection is bounded on purpose, so a deliverable nobody can ever
+adjudicate still cannot lock the funds for good.
+
+`tests/test_review_fixes.py` reproduces both findings. It first asserts that the
+old behaviour was exploitable, then asserts the fix, then sweeps the space around
+it: sizes from one byte to three times the limit past the boundary, each served
+with the digest of its own admissible prefix, and every state crossed with every
+timing relative to the deadline and the grace window. A spy on `hashlib` proves
+an oversized body is refused before it is hashed.
+
 ## The problem
 
 A payer locks funds against acceptance criteria. A worker does the work and
@@ -164,7 +213,7 @@ Each of these is a live weakness, not a rhetorical one.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests     # 69 tests, offline, no model
+python -m unittest discover -s tests     # 88 tests, offline, no model
 genvm-lint check contracts/warrant.py
 ```
 
