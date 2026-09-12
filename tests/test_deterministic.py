@@ -333,31 +333,37 @@ class AgreementIsExhaustive(unittest.TestCase):
 
     def test_no_agreeing_pair_settles_differently(self):
         checked = 0
+        agreeing = 0
         for count in range(1, 9):
             crit = criteria(count, [1] * count)
             vectors = ["".join(v) for v in itertools.product("01", repeat=count)]
             for a_bits, b_bits in itertools.product(vectors, repeat=2):
-                a = {"digest": "d", "bits": a_bits, "screened": False}
-                b = {"digest": "d", "bits": b_bits, "screened": False}
+                a = {"digest": "d", "bits": a_bits, "screened": False, "refused": ""}
+                b = {"digest": "d", "bits": b_bits, "screened": False, "refused": ""}
                 checked += 1
                 if w.results_agree(a, b):
+                    agreeing += 1
                     self.assertEqual(w.settlement_of(a_bits, crit),
                                      w.settlement_of(b_bits, crit))
         self.assertGreater(checked, 80000)
+        # Guard against a vacuous pass. If the result structure ever gains a
+        # field these dicts lack, results_agree returns False for every pair
+        # and this test would check nothing while still reporting success.
+        self.assertGreater(agreeing, 0, "no pair agreed, the test is vacuous")
 
     def test_a_different_digest_never_agrees(self):
-        a = {"digest": "d1", "bits": "11", "screened": False}
-        b = {"digest": "d2", "bits": "11", "screened": False}
+        a = {"digest": "d1", "bits": "11", "screened": False, "refused": ""}
+        b = {"digest": "d2", "bits": "11", "screened": False, "refused": ""}
         self.assertFalse(w.results_agree(a, b))
 
     def test_a_different_screen_verdict_never_agrees(self):
-        a = {"digest": "d", "bits": "11", "screened": False}
-        b = {"digest": "d", "bits": "11", "screened": True}
+        a = {"digest": "d", "bits": "11", "screened": False, "refused": ""}
+        b = {"digest": "d", "bits": "11", "screened": True, "refused": ""}
         self.assertFalse(w.results_agree(a, b))
 
     def test_a_missing_field_never_agrees(self):
         a = {"digest": "d", "bits": "11"}
-        b = {"digest": "d", "bits": "11", "screened": False}
+        b = {"digest": "d", "bits": "11", "screened": False, "refused": ""}
         self.assertFalse(w.results_agree(a, b))
 
     def test_a_non_object_never_agrees(self):
@@ -365,8 +371,8 @@ class AgreementIsExhaustive(unittest.TestCase):
         self.assertFalse(w.results_agree(None, None))
 
     def test_extra_fields_are_ignored_because_the_field_set_is_fixed(self):
-        a = {"digest": "d", "bits": "11", "screened": False, "note": "x"}
-        b = {"digest": "d", "bits": "11", "screened": False, "note": "y"}
+        a = {"digest": "d", "bits": "11", "screened": False, "refused": "", "note": "x"}
+        b = {"digest": "d", "bits": "11", "screened": False, "refused": "", "note": "y"}
         self.assertTrue(w.results_agree(a, b))
 
 

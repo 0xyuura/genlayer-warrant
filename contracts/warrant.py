@@ -66,7 +66,12 @@ YES_TOKEN = "YES"
 NO_TOKEN = "NO"
 VERDICT_FIELD = "verdict"
 
-RESULT_FIELDS = ("digest", "bits", "screened")
+RESULT_FIELDS = ("digest", "bits", "screened", "refused")
+
+# How long a job that was submitted on time stays safe from reclaim after the
+# deadline, so the payer cannot front run adjudication. Bounded rather than
+# permanent, so a deliverable nobody can ever adjudicate cannot lock the funds.
+ADJUDICATION_GRACE = 3 * 24 * 60 * 60
 
 ERROR_EXPECTED = "[EXPECTED]"
 
@@ -400,14 +405,14 @@ def judge_evidence(criteria: list, content: bytes, status: int,
     if required_failed:
         return {"digest": digest,
                 "bits": "".join("0" if b is None else b for b in bits),
-                "screened": False}
+                "screened": False, "refused": ""}
 
     text = content.decode("utf-8", errors="replace")
 
     if read_bit(ask(screen_prompt(text))):
         return {"digest": digest,
                 "bits": "".join("0" if b is None else b for b in bits),
-                "screened": True}
+                "screened": True, "refused": ""}
 
     out = []
     for criterion, bit in zip(criteria, bits):
@@ -416,7 +421,7 @@ def judge_evidence(criteria: list, content: bytes, status: int,
             continue
         answer = read_bit(ask(build_closed_prompt(criterion["text"], text)))
         out.append("1" if answer else "0")
-    return {"digest": digest, "bits": "".join(out), "screened": False}
+    return {"digest": digest, "bits": "".join(out), "screened": False, "refused": ""}
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +437,56 @@ STATE_STALEMATE = "STALEMATE"
 STATE_CLOSED = "CLOSED"
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+
+def evaluate_fetch(criteria: list, body: bytes, status: int, promised: str,
+                   ask: typing.Callable[[str], typing.Any]) -> dict:
+    """Everything the leader does with a fetched deliverable, in order.
+
+    Size is checked first and against the whole body. An earlier version
+    sliced the body to MAX_EVIDENCE_BYTES and hashed the slice, which let a
+    worker commit to the digest of a prefix and serve a longer file: the
+    appended bytes were never hashed and never judged, and the size guard
+    inside judge_evidence could not fire because it only ever saw the slice.
+    Nothing is sliced now. An oversized body is refused before it is hashed.
+
+    Every refusal is a named value in the agreed structure rather than an
+    exception, so validators reach consensus on the refusal itself instead of
+    all failing and leaving the job in whatever state it was already in.
+    """
+    if len(body) > MAX_EVIDENCE_BYTES:
+        return {"digest": "", "bits": "", "screened": False,
+                "refused": "EVIDENCE_TOO_LARGE"}
+    digest = hashlib.sha256(body).hexdigest()
+    if digest != promised:
+        return {"digest": digest, "bits": "", "screened": False,
+                "refused": "EVIDENCE_DIGEST_MISMATCH"}
+    return judge_evidence(criteria, body, status, ask)
+
+
+def reclaim_refusal(state: str, now: int, deadline: int) -> str:
+    """Why the payer may not reclaim yet, or "" if they may.
+
+    An earlier version refused only SETTLED and CLOSED, so a payer could wait
+    for a ruling in the worker's favour and reclaim after the deadline but
+    before anyone called settle. The rule is now an explicit allowlist, and
+    a state not named here is refused rather than trusted.
+
+    A RULED job is never reclaimable: the ruling is final and settle is always
+    available to anyone. A SUBMITTED job is protected for ADJUDICATION_GRACE
+    after the deadline, because a worker who delivered on time must not be
+    front run before adjudicate has had a chance to run.
+    """
+    if state == STATE_RULED:
+        return "RULING_EXISTS"
+    if state not in (STATE_FUNDED, STATE_ACCEPTED, STATE_SUBMITTED,
+                     STATE_STALEMATE):
+        return "STATE"
+    if now <= deadline:
+        return "BEFORE_DEADLINE"
+    if state == STATE_SUBMITTED and now <= deadline + ADJUDICATION_GRACE:
+        return "ADJUDICATION_GRACE"
+    return ""
 
 
 def _fail(prefix: str, code: str) -> typing.NoReturn:
@@ -585,11 +640,7 @@ class Warrant(gl.Contract):
 
         def leader_fn() -> str:
             response = gl.nondet.web.request(url, method="GET")
-            body = response.body[:MAX_EVIDENCE_BYTES]
-            digest = hashlib.sha256(body).hexdigest()
-            if digest != promised:
-                return json.dumps({"digest": digest, "bits": "",
-                                   "screened": False}, sort_keys=True)
+
             def ask(prompt: str) -> typing.Any:
                 # JSON mode removes a failure that has nothing to do with
                 # security: a text mode model wraps its answer in code fences
@@ -599,7 +650,9 @@ class Warrant(gl.Contract):
                 # verdict field and discards everything else unread.
                 return gl.nondet.exec_prompt(prompt, response_format="json")
 
-            result = judge_evidence(criteria, body, status_of(response), ask)
+            # The whole body, never a slice. See evaluate_fetch.
+            result = evaluate_fetch(criteria, response.body,
+                                    status_of(response), promised, ask)
             return json.dumps(result, sort_keys=True)
 
         def validator_fn(leaders_res: gl.vm.Result) -> bool:
@@ -615,8 +668,15 @@ class Warrant(gl.Contract):
         agreed = json.loads(gl.vm.run_nondet_unsafe(leader_fn, validator_fn))
         job.attempts = u256(int(job.attempts) + 1)
 
-        if agreed["digest"] != promised:
-            job.reason = "EVIDENCE_DIGEST_MISMATCH"
+        # A refusal is agreed like any other result. The digest comparison is
+        # kept as well: an honest validator already rejects a leader that
+        # claims no refusal over a mismatched body, so this never fires, but
+        # it costs nothing to refuse the case here too.
+        refused = str(agreed.get("refused", ""))
+        if not refused and agreed["digest"] != promised:
+            refused = "EVIDENCE_DIGEST_MISMATCH"
+        if refused:
+            job.reason = refused
             if int(job.attempts) >= MAX_ATTEMPTS:
                 job.state = STATE_STALEMATE
             else:
@@ -681,14 +741,16 @@ class Warrant(gl.Contract):
 
     @gl.public.write
     def reclaim(self, job_id: str) -> None:
-        """After the deadline, a job that never settled returns to the payer."""
+        """After the deadline, a job with no ruling returns to the payer.
+
+        Never overrides a ruling. See reclaim_refusal for the allowlist.
+        """
         job = self._job(job_id)
-        if job.state == STATE_SETTLED or job.state == STATE_CLOSED:
-            _fail(ERROR_EXPECTED, "STATE")
         if gl.message.sender_address != job.payer:
             _fail(ERROR_EXPECTED, "NOT_PAYER")
-        if _now() <= int(job.deadline):
-            _fail(ERROR_EXPECTED, "BEFORE_DEADLINE")
+        refusal = reclaim_refusal(str(job.state), _now(), int(job.deadline))
+        if refusal:
+            _fail(ERROR_EXPECTED, refusal)
         job.entitled = job.payer
         job.state = STATE_SETTLED
 

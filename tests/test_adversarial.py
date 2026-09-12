@@ -101,7 +101,7 @@ class MoneyIsOutOfReach(unittest.TestCase):
     def test_the_judgement_output_carries_no_address_and_no_amount(self):
         for name, body in SMALL:
             out = w.judge_evidence(CRITERIA, body, 200, lambda prompt: "NO")
-            self.assertEqual(set(out.keys()), {"digest", "bits", "screened"},
+            self.assertEqual(set(out.keys()), {"digest", "bits", "screened", "refused"},
                              name)
             self.assertRegex(out["bits"], r"^[01]*$", name)
             self.assertRegex(out["digest"], r"^[0-9a-f]{64}$", name)
@@ -121,7 +121,7 @@ class MoneyIsOutOfReach(unittest.TestCase):
         ]
         for name, body in SMALL:
             out = w.judge_evidence(soft, body, 200, lambda prompt: "NO")
-            self.assertEqual(set(out.keys()), {"digest", "bits", "screened"})
+            self.assertEqual(set(out.keys()), {"digest", "bits", "screened", "refused"})
             # The screen answered NO, so judgement ran and produced one bit
             # per criterion. Nothing else crossed the boundary.
             self.assertEqual(len(out["bits"]), len(soft), name)

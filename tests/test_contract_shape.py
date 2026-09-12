@@ -122,6 +122,34 @@ class StorageValuesAreConvertedBeforeStdlibUse(unittest.TestCase):
         self.assertGreaterEqual(checked, 3, "the rule matched nothing")
 
 
+class ReviewFixesAreWiredIn(unittest.TestCase):
+    """The pure functions are tested elsewhere. These pin that the contract
+    actually calls them, so a later edit cannot quietly route around a fix."""
+
+    def test_the_leader_never_slices_the_response_body(self):
+        src = inspect.getsource(w.Warrant.adjudicate)
+        leader = src[src.index("def leader_fn"):src.index("def validator_fn")]
+        self.assertNotIn("body[:", leader, "the prefix slice is back")
+        self.assertNotIn("MAX_EVIDENCE_BYTES]", leader)
+        self.assertIn("evaluate_fetch(", leader)
+        self.assertIn("response.body", leader)
+
+    def test_the_leader_does_not_hash_on_its_own(self):
+        src = inspect.getsource(w.Warrant.adjudicate)
+        leader = src[src.index("def leader_fn"):src.index("def validator_fn")]
+        self.assertNotIn("sha256", leader,
+                         "hashing belongs after the size check in evaluate_fetch")
+
+    def test_reclaim_goes_through_the_allowlist(self):
+        src = inspect.getsource(w.Warrant.reclaim)
+        self.assertIn("reclaim_refusal(", src)
+        self.assertNotIn("STATE_SETTLED or", src, "the old denylist is back")
+
+    def test_both_fixes_are_module_level_and_reachable(self):
+        for name in ("evaluate_fetch", "reclaim_refusal"):
+            self.assertTrue(callable(getattr(w, name, None)), name)
+
+
 class StorageIsNotTouchedInsideTheNondetBlock(unittest.TestCase):
     def test_adjudicate_pulls_what_it_needs_before_the_closures(self):
         src = inspect.getsource(w.Warrant.adjudicate)
