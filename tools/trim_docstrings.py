@@ -1,9 +1,9 @@
 """Shorten every docstring in the contract to its first paragraph.
 
 The contract source is sent on chain in full at every deploy. At 31.3 KB the
-corrected version was not propagated between Bradbury nodes and never mined,
-even at twice the network gas price, while every earlier version at or under
-28.4 KB deployed normally. Nearly ten of those kilobytes were docstrings.
+corrected version never mined, even at twice the network gas price. This first
+trim was aimed at a suspected size limit; the real limit turned out to be the
+per transaction gas cap, and tools/strip_contract.py records that finding.
 
 The long explanations are not lost: they live in README.md and docs/DESIGN.md,
 where a reader looks for them anyway. Behaviour is untouched, and the test suite
