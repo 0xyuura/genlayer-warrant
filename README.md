@@ -4,9 +4,14 @@
 wrote the evidence.**
 
 Live on Testnet Bradbury at
-[`0xA50cA7A2be22b53968a72b42f5188F44B7b839EE`](https://explorer-bradbury.genlayer.com/address/0xA50cA7A2be22b53968a72b42f5188F44B7b839EE)
+[`0xaFdC6a206A5b661Bf21302C0e3f6584c721361a6`](https://explorer-bradbury.genlayer.com/address/0xaFdC6a206A5b661Bf21302C0e3f6584c721361a6),
+deployed from `contracts/warrant.py` at commit `fbd0623`. The code stored on
+chain is byte identical to that file (sha256 `8cd6e99c9e3e9ac5...`).
 
-Call it without a local setup: [open it in GenLayer Studio](https://studio.genlayer.com/?import-contract=0xA50cA7A2be22b53968a72b42f5188F44B7b839EE)
+Call it without a local setup: [open it in GenLayer Studio](https://studio.genlayer.com/?import-contract=0xaFdC6a206A5b661Bf21302C0e3f6584c721361a6)
+
+The first deployment, `0xA50cA7A2be22b53968a72b42f5188F44B7b839EE`, is the
+version the review below refers to and is superseded.
 
 ## Revision after review
 
@@ -56,6 +61,36 @@ it: sizes from one byte to three times the limit past the boundary, each served
 with the digest of its own admissible prefix, and every state crossed with every
 timing relative to the deadline and the grace window. A spy on `hashlib` proves
 an oversized body is refused before it is hashed.
+
+### Both fixes, replayed on chain
+
+Against the corrected deployment `0xaFdC6a206A5b661Bf21302C0e3f6584c721361a6`,
+with real GEN. Every job uses the same frozen criteria (hash
+`e3a6abaf231d701d...`). A refused write surfaces as `FINISHED_WITH_ERROR` and
+leaves state untouched; the named reason comes from `genlayer call`, which runs
+the same write as a simulation and returns it.
+
+| Job | What was attempted | Result on chain |
+| --- | --- | --- |
+| `j1` | The exact prefix attack: `fixtures/deliverable-oversized.md` is 78,811 bytes, submitted with the sha256 of only its first 65,536 bytes (`ef9dff81...`) | `adjudicate` reached AGREE (tx `0x54e89a29...`) with reason `EVIDENCE_TOO_LARGE`, empty bits, no ruling. The job stays `SUBMITTED` |
+| `j1` | Payer reclaims after the deadline, inside the adjudication grace | Simulation: `[EXPECTED] ADJUDICATION_GRACE`. Write (tx `0x19311247...`): `FINISHED_WITH_ERROR` |
+| `j2` | Honest deliverable, then payer reclaims after the deadline | `adjudicate` ruled bits `11` (tx `0xa1b9a6df...`). Reclaim write (tx `0xd9d93b75...`): `FINISHED_WITH_ERROR`, job still `RULED`. Then settled and withdrawn to `CLOSED` |
+| `j4` | The same, with the refusal captured verbatim | Ruled bits `11` (tx `0xd7db190c...`). Simulated reclaim before and after the deadline: `[EXPECTED] RULING_EXISTS`. Reclaim write (tx `0x49eda1f4...`): `FINISHED_WITH_ERROR`, still `RULED`. `settle` (tx `0x3d6fe1bd...`) and `withdraw` (tx `0x4955097b...`) then closed it |
+
+`j3` is left in the record too. Its seven minute deadline passed before
+`submit` landed, so it never reached `RULED`; the payer's reclaim of that
+`ACCEPTED` job succeeded, which is the intended behaviour for a job nobody
+delivered on.
+
+**Why the corrected source is shorter than the reviewed one.** Bradbury enforces
+a per transaction gas cap of 16,777,216 (EIP-7825). A deploy carries the whole
+source as calldata, and the commented 23 KB contract needed about 19.1M gas, so
+it was never included at any price. Measured before changing anything: a plain
+transfer declaring exactly 16,777,216 gas mined at once, and the same transfer
+declaring 16,777,217 never did. `tools/strip_contract.py` removed comments and
+docstrings, and refuses to write unless the syntax tree is unchanged apart from
+docstrings. The annotated source is commit `115442c`; the deployed one is
+`fbd0623`, and all 88 tests run against it.
 
 ## The problem
 
@@ -241,10 +276,12 @@ pair the agreement rule accepts while settlement differs. That is cheap
 precisely because agreement is exact equality, and any future loosening of the
 rule makes it fail immediately.
 
-## Exercised on chain
+## Exercised on chain, first deployment
 
-Everything below happened on Testnet Bradbury against the live contract, with
-real GEN, and can be read back from the explorer.
+Everything below happened on Testnet Bradbury against the first deployment,
+`0xA50cA7A2be22b53968a72b42f5188F44B7b839EE`, with real GEN, before the review.
+The replays of both review findings on the corrected contract are in
+[Revision after review](#both-fixes-replayed-on-chain).
 
 Two jobs were run end to end.
 
@@ -292,8 +329,10 @@ contracts/warrant.py          the contract, and every rule that votes
 tests/test_deterministic.py   the deterministic layer
 tests/test_adversarial.py     the injection corpus and containment properties
 tests/test_contract_shape.py  structural invariants
+tests/test_review_fixes.py    both review findings, reproduced then swept
 tests/corpus.py               the payloads
-fixtures/                     two deliverables, one clean and one hostile
+fixtures/                     deliverables: clean, plain, hostile, oversized
+tools/strip_contract.py       fits the deploy under the gas cap, tree checked
 docs/DESIGN.md                the design: threat model, consensus rule, limitations
 ```
 
